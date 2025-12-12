@@ -1,0 +1,17 @@
+<configuration>
+    <property name="STDOUT_PATTERN" value="%magenta(%date{yyyy-MM-dd HH:mm:ss.SSS}) %highlight(%-7.7([%.5level])) %cyan(%32.32logger{16}) [%.9thread] %message%n%xException"/>
+
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder>
+            <!-- ISO-8601 with timezone, one-line, no extra blank lines -->
+            <pattern>${STDOUT_PATTERN}</pattern>
+            <immediateFlush>true</immediateFlush>
+        </encoder>
+    </appender>
+
+    <!-- enable debug for your package if you want -->
+
+    <root level="DEBUG">
+        <appender-ref ref="STDOUT" />
+    </root>
+</configuration>
