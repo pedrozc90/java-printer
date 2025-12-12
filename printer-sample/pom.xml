@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.pedrozc90</groupId>
+        <artifactId>printer</artifactId>
+        <version>1.0.0</version>
+    </parent>
+
+    <artifactId>printer-sample</artifactId>
+    <packaging>jar</packaging>
+
+    <properties>
+        <maven.compiler.source>8</maven.compiler.source>
+        <maven.compiler.target>8</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+
+    <dependencies>
+        <!-- Core Module -->
+        <dependency>
+            <groupId>com.pedrozc90</groupId>
+            <artifactId>printer-core</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- SATO -->
+        <dependency>
+            <groupId>com.pedrozc90</groupId>
+            <artifactId>printer-sato</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- Zebra -->
+        <dependency>
+            <groupId>com.pedrozc90</groupId>
+            <artifactId>printer-zebra</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- Avery Dennison -->
+        <dependency>
+            <groupId>com.pedrozc90</groupId>
+            <artifactId>printer-avery-dennison</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- Tests -->
+        <dependency>
+            <groupId>com.pedrozc90</groupId>
+            <artifactId>printer-tests</artifactId>
+            <version>${project.version}</version>
+            <scope>compile</scope>
+        </dependency>
+
+        <!-- Logback -->
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <version>1.5.21</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+            </resource>
+        </resources>
+
+        <plugins>
+            <!-- Skip jar creation for sample module so it doesn't produce a publishable artifact -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>${maven.jar.plugin.version}</version>
+                <configuration>
+                    <skip>true</skip>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>${maven.compiler.plugin.version}</version>
+                <configuration>
+                    <source>${maven.compiler.source}</source>
+                    <target>${maven.compiler.target}</target>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>${maven.shade.plugin.version}</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <transformers>
+                                <transformer
+                                        implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>com.pedrozc90.printers.Main</mainClass>
+                                </transformer>
+                                <!-- keep service files (safe for some libraries) -->
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                            </transformers>
+                            <!-- optional: ensure dependencies are included -->
+                            <artifactSet>
+                                <includes>
+                                    <include>*:*</include>
+                                </includes>
+                            </artifactSet>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>
