@@ -1,5 +1,7 @@
 package com.contare.printers.utils;
 
+import org.jboss.logging.Logger;
+
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -18,10 +20,11 @@ import java.util.function.Consumer;
  */
 public class PrinterServer implements AutoCloseable {
 
-    private final ServerSocket serverSocket;
     private final BlockingQueue<Consumer<Socket>> handlers = new LinkedBlockingQueue<>();
     private final ExecutorService clientPool = Executors.newCachedThreadPool();
-    private final Thread acceptThread;
+
+    private final ServerSocket _server;
+    private final Thread _thread;
     private volatile boolean running = true;
 
     public PrinterServer() throws IOException {
@@ -29,62 +32,11 @@ public class PrinterServer implements AutoCloseable {
     }
 
     public PrinterServer(int port) throws IOException {
-        serverSocket = new ServerSocket(port);
-        acceptThread = new Thread(this::acceptLoop, "printer-server-accept");
-        acceptThread.setDaemon(true);
-        acceptThread.start();
-    }
+        _server = new ServerSocket(port);
 
-    private void acceptLoop() {
-        try {
-            while (running && !serverSocket.isClosed()) {
-                Socket sock = null;
-                try {
-                    sock = serverSocket.accept();
-
-                    // Wait a bounded time for a handler to be provided for this connection.
-                    // If none is provided, close the socket and continue to next accept.
-                    Consumer<Socket> handler = handlers.poll(5, TimeUnit.SECONDS);
-                    if (handler == null) {
-                        try {
-                            sock.close();
-                        } catch (IOException ignored) {
-                        }
-                        continue;
-                    }
-
-                    final Socket clientSocket = sock;
-                    clientPool.submit(() -> {
-                        try {
-                            handler.accept(clientSocket);
-                        } catch (Exception e) {
-                            // allow tests to observe errors via futures; but print stack for debugging
-                            e.printStackTrace();
-                        } finally {
-                            try {
-                                clientSocket.close();
-                            } catch (IOException ignored) {
-                            }
-                        }
-                    });
-
-                } catch (SocketException se) {
-                    if (running) {
-                        se.printStackTrace();
-                    }
-                    break;
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    break;
-                } catch (IOException ioe) {
-                    ioe.printStackTrace();
-                    // continue accepting unless server is shutting down
-                }
-            }
-        } finally {
-            // cleanup pool
-            clientPool.shutdownNow();
-        }
+        _thread = new Thread(new Acceptor(_server), "printer-server-accept");
+        _thread.setDaemon(true);
+        _thread.start();
     }
 
     /**
@@ -99,7 +51,7 @@ public class PrinterServer implements AutoCloseable {
      * Get the server listening port (useful when constructed with port 0).
      */
     public int getPort() {
-        return serverSocket.getLocalPort();
+        return _server.getLocalPort();
     }
 
     /**
@@ -108,9 +60,13 @@ public class PrinterServer implements AutoCloseable {
     public void stop() throws IOException {
         running = false;
         try {
-            serverSocket.close();
+            if (!_server.isClosed()) {
+                _server.close();
+            }
         } finally {
-            clientPool.shutdownNow();
+            if (!clientPool.isShutdown()) {
+                clientPool.shutdownNow();
+            }
         }
     }
 
@@ -118,4 +74,73 @@ public class PrinterServer implements AutoCloseable {
     public void close() throws IOException {
         stop();
     }
+
+    private class Acceptor implements Runnable {
+
+        private final Logger logger = Logger.getLogger(Acceptor.class);
+
+        private final ServerSocket _server;
+
+        public Acceptor(final ServerSocket server) {
+            this._server = server;
+        }
+
+        @Override
+        public void run() {
+            try {
+                while (running && !_server.isClosed()) {
+                    Socket socket = null;
+                    try {
+                        socket = _server.accept();
+
+                        // Wait a bounded time for a handler to be provided for this connection.
+                        // If none is provided, close the socket and continue to next accept.
+                        Consumer<Socket> handler = handlers.poll(5, TimeUnit.SECONDS);
+                        if (handler == null) {
+                            try {
+                                socket.close();
+                            } catch (IOException ignored) {
+                                // ignored
+                            }
+                            continue;
+                        }
+
+                        final Socket clientSocket = socket;
+                        clientPool.submit(() -> {
+                            try {
+                                handler.accept(clientSocket);
+                            } catch (Exception e) {
+                                // allow tests to observe errors via futures; but print stack for debugging
+                                logger.error("Error", e);
+                            } finally {
+                                try {
+                                    clientSocket.close();
+                                } catch (IOException ignored) {
+                                    // ignored
+                                }
+                            }
+                        });
+
+                    } catch (SocketException e) {
+                        if (running) {
+                            logger.error("Socket error", e);
+                        }
+                        break;
+                    } catch (InterruptedException e) {
+                        logger.error("Interrupted", e);
+                        Thread.currentThread().interrupt();
+                        break;
+                    } catch (IOException e) {
+                        // continue accepting unless server is shutting down
+                        logger.error("Error accepting connection", e);
+                    }
+                }
+            } finally {
+                // cleanup pool
+                clientPool.shutdownNow();
+            }
+        }
+
+    }
+
 }

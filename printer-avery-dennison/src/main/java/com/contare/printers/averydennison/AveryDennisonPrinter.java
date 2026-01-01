@@ -56,7 +56,7 @@ public class AveryDennisonPrinter extends BasePrinter {
 
                     if (StringUtils.isNotBlank(read)) {
                         if (out.add(read)) {
-                            onReceiveEpc(read);
+                            onReceiveEpc(read, null);
                         }
 
                         start = System.currentTimeMillis();
@@ -92,8 +92,8 @@ public class AveryDennisonPrinter extends BasePrinter {
 
     // CALLBACKS
     @Override
-    public void onReceiveEpc(final String epc) {
-        logger.infof("[%s] Received EPC: '%s'", tag(), epc);
+    public void onReceiveEpc(final String epc, final String tid) {
+        logger.infof("[%s] Received EPC: '%s', TID: '%s'", tag(), epc, tid);
     }
 
     @Override
@@ -103,27 +103,22 @@ public class AveryDennisonPrinter extends BasePrinter {
 
     // ACTIONS
     @Override
-    public void play() throws PrinterException {
+    public boolean play() throws PrinterException {
         throw new UnsupportedOperationException("Method Not Implemented.");
     }
 
     @Override
-    public void pause() throws PrinterException {
+    public boolean pause() throws PrinterException {
         throw new UnsupportedOperationException("Method Not Implemented.");
     }
 
     @Override
-    public void cancel() throws PrinterException {
+    public boolean cancel() throws PrinterException {
         throw new UnsupportedOperationException("Method Not Implemented.");
     }
 
     @Override
-    public void cancelSku() throws PrinterException {
-        throw new UnsupportedOperationException("Method Not Implemented.");
-    }
-
-    @Override
-    public void cancelAll() throws PrinterException {
+    public boolean cancelSku() throws PrinterException {
         throw new UnsupportedOperationException("Method Not Implemented.");
     }
 

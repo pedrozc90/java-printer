@@ -1,5 +1,6 @@
 package com.contare.printers.core;
 
+import com.contare.printers.core.objects.RawPacket;
 import com.contare.printers.utils.PrinterServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -66,12 +67,11 @@ public class PrinterConnectionTest {
         final PrinterConnection pc = new PrinterConnection("127.0.0.1", port);
         try {
             pc.connect(2_000);
-            final List<String> results = pc.readAsPackets();
+            final List<RawPacket> results = pc.readAsPackets();
             assertNotNull(results);
             assertEquals(1, results.size(), "expected exactly one message");
-            final String msg = results.get(0);
-            final byte[] msgBytes = msg.getBytes(charset);
-            assertArrayEquals(message, msgBytes);
+            final RawPacket packet = results.get(0);
+            assertArrayEquals(message, packet.getBytes());
         } finally {
             pc.close();
         }
@@ -152,11 +152,11 @@ public class PrinterConnectionTest {
         final PrinterConnection pc = new PrinterConnection("127.0.0.1", port);
         try {
             pc.connect(2_000);
-            final List<String> results = pc.readAsPackets();
+            final List<RawPacket> results = pc.readAsPackets();
             assertEquals(3, results.size(), "expected two messages");
-            assertArrayEquals(leading, results.get(0).getBytes(charset));
-            assertArrayEquals(m1, results.get(1).getBytes(charset));
-            assertArrayEquals(m2, results.get(2).getBytes(charset));
+            assertArrayEquals(leading, results.get(0).getBytes());
+            assertArrayEquals(m1, results.get(1).getBytes());
+            assertArrayEquals(m2, results.get(2).getBytes());
         } finally {
             pc.close();
         }
@@ -188,11 +188,11 @@ public class PrinterConnectionTest {
         final PrinterConnection pc = new PrinterConnection("127.0.0.1", port);
         try {
             pc.connect(2_000);
-            final List<String> results = pc.readAsPackets();
+            final List<RawPacket> results = pc.readAsPackets();
             assertEquals(3, results.size(), "expected two messages");
-            assertEquals("\u0003", results.get(0));
-            assertEquals("\u000232,PS2,RS0,RE0,PE0,EN00,BT0,Q000000\u0003", results.get(1));
-            assertEquals("\u000261,1,N,EP:3BE10000376C8DE8000022D1,ID:E280119120007624A0700360\u0003", results.get(2));
+            assertEquals("\u0003", results.get(0).toText());
+            assertEquals("\u000232,PS2,RS0,RE0,PE0,EN00,BT0,Q000000\u0003", results.get(1).toText());
+            assertEquals("\u000261,1,N,EP:3BE10000376C8DE8000022D1,ID:E280119120007624A0700360\u0003", results.get(2).toText());
         } finally {
             pc.close();
         }
@@ -200,7 +200,11 @@ public class PrinterConnectionTest {
         done.get(1, TimeUnit.SECONDS);
     }
 
-    // helper to concatenate bytes with single leading and trailing bytes
+    // HELPERS
+
+    /**
+     * helper to concatenate bytes with single leading and trailing bytes
+     */
     private static byte[] concat(byte lead, byte[] middle, byte trail) {
         byte[] out = new byte[1 + middle.length + 1];
         out[0] = lead;

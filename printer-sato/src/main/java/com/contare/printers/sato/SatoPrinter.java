@@ -3,17 +3,19 @@ package com.contare.printers.sato;
 import com.contare.printers.core.BasePrinter;
 import com.contare.printers.core.exceptions.PrinterException;
 import com.contare.printers.sato.enums.PrinterStatus;
-import com.contare.printers.sato.objects.SatoPrinterInformation;
+import com.contare.printers.sato.objects.SatoMessage;
+import com.contare.printers.sato.parser.SatoParser;
 
-import java.io.IOException;
-import java.net.SocketException;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 
 public class SatoPrinter extends BasePrinter {
 
     private static final long MIN_PS0_RECEIVED = 8;
+
+    private final SatoParser parser = SatoParser.getInstance();
 
     public SatoPrinter(final String ip, final Integer port) {
         super(ip, port);
@@ -56,7 +58,10 @@ public class SatoPrinter extends BasePrinter {
 
             // stop previous printing, if still ongoing,
             // clear the printer's buffer to avoid PG + PK command to return tags from previous printing.
-            cancel();
+            final boolean canceled = queryCancel();
+            if (!canceled) {
+                throw new PrinterException("Failed to cancel previous printing job.");
+            }
 
             printing = true;
 
@@ -71,8 +76,6 @@ public class SatoPrinter extends BasePrinter {
             // send SBPL to the printer
             send(normalized);
 
-            requestPrinterStatusAndEPC();
-
             // wait a little since se send a big file to the printer
             try {
                 Thread.sleep(300);
@@ -80,96 +83,76 @@ public class SatoPrinter extends BasePrinter {
                 logger.errorf(e, "[%s] Error while sleeping", tag);
             }
 
-            SatoPrinterInformation prev = null;
-            int it = 0;
-            long elapsed = 0;
+            SatoMessage.PrinterInfo prev = null;    // store the last printer status message received
+
+            int it = 0;                             // count the number of iterations
+            long elapsed = 0;                       // time taken between iterations
+            int remaining = Integer.MAX_VALUE;      // remaining number of tags to print (equal to printer status Q parameter)
             long ps0Received = 0;   // count the number of PS0 received
 
             long start = System.currentTimeMillis();
 
+            final int MAX_COUNTER = 3;
+            int stableCount = 0;
+
             mainLoop:
-            while ((elapsed = System.currentTimeMillis() - start) < READ_TIMEOUT && printing) {
+            while ((elapsed = System.currentTimeMillis() - start) < READ_TIMEOUT && remaining > 0 && printing) {
                 logger.infof("[%s] Socket iteration '%d' (%d ms)", tag, it, elapsed);
 
-                try {
-                    final String read = connection.readAsString();
-                    logger.infof("[%s] Socket read: '%s'", tag, read);
+                // request printer status and EPC/TID
+                final List<SatoMessage> messages = queryStatusAndTags();
+                logger.debugf("Socket received '%d' messages", messages.size());
 
-                    final SatoPrinterInformation information = SatoPrinterInformation.parse(read);
-                    if (information != null) {
-                        logger.infof("[%s] '%s'", tag, information);
+                // update the last-received timestamp so timeout is relative to the last activity
+                start = System.currentTimeMillis();
 
-                        final String epc = information.getEpc();
-                        if (epc != null && out.add(epc)) {
-                            onReceiveEpc(epc);
+                for (SatoMessage m : messages) {
+                    // check printer status
+                    if (m instanceof SatoMessage.PrinterInfo) {
+                        final SatoMessage.PrinterInfo obj = (SatoMessage.PrinterInfo) m;
+                        logger.infof("Printer status: %s", obj);
+
+                        if (!Objects.equals(obj, prev)) {
+                            remaining = obj.getQ();
+                            onUpdateStatus(obj);
                         }
 
-                        if (!Objects.equals(information, prev)) {
-                            onUpdateStatus(information);
-                        }
-
-                        requestPrinterStatusAndEPC();
-
-                        // verifica se a impressao está finalizada, pois veio um ,PS0, no status da impressora
-                        if (information.getPrinterStatus() == PrinterStatus.STANDBY) {
-                            // força o monitoramento a receber 10 status PS0 antes de encerrar o loop, pois as vezes a impressora demora um pouco para mudar o status
-                            // nesse caso impressão de 1 ou 2 etiquetas podem ser sobrescritas pelo envio da próxima se o loop terminar rápido demaisø
-                            if (ps0Received >= MIN_PS0_RECEIVED) {
+                        if (remaining == 0 && obj.getPs() == PrinterStatus.STANDBY) {
+                            stableCount++;
+                            logger.debugf("Printer status is STANDBY, count: %d", stableCount);
+                            if (stableCount >= (MAX_COUNTER - 1)) {
                                 printing = false;
-                                logger.infof("[%s] Printing completed", tag);
+                                break mainLoop;
                             }
-                            logger.infof("[%s] Socket PS0 received: '%d'", tag, ps0Received);
-                            ps0Received++;
+                        } else {
+                            stableCount = 0;
                         }
 
-                        start = System.currentTimeMillis();
-                    } else {
-                        // if we read nothing from the socket, send another PG + PK command until we reach max processing time
-                        requestPrinterStatusAndEPC();
+                        prev = obj;
                     }
+                    // collect epc
+                    else if (m instanceof SatoMessage.TagInfo) {
+                        final SatoMessage.TagInfo obj = (SatoMessage.TagInfo) m;
+                        logger.infof("Tag info: %s", obj);
 
-                    // small delay so we do not spam the printer
-                    try {
-                        Thread.sleep(200);
-                    } catch (InterruptedException e) {
-                        logger.errorf(e, "[%s] Error while sleeping", tag);
-                    }
-
-                    if (it > MAX_ITERATIONS) {
-                        logger.errorf("[%s] Infinite loop", tag);
-                        break;
-                    }
-
-                    prev = information;
-                } catch (IOException e) {
-                    logger.errorf(e, "[%s] Error reading from socket", tag);
-                } catch (PrinterException e) {
-                    logger.errorf(e, "[%s] Printer error", tag);
-
-                    final Throwable cause = e.getCause();
-                    if (cause instanceof SocketException) {
-                        logger.errorf("[%s] Printer socket disconnected", tag);
-
-                        for (int retry = 0; retry < MAX_RECONNECTIONS; retry++) {
-                            logger.infof("[%s] Printer socket reconnecting retry %d/%d", tag, (retry + 1), MAX_RECONNECTIONS);
-                            try {
-                                connection.connect(3_000);
-                                // volta para o loop principal (while)
-                                continue mainLoop;
-                            } catch (IOException e2) {
-                                try {
-                                    Thread.sleep(3_000);
-                                } catch (InterruptedException ex) {
-                                    logger.errorf(ex, "[%s] Error while sleeping", tag);
-                                }
-                            }
+                        final String epc = obj.getEpc();
+                        final String tid = obj.getTid();
+                        if (epc != null && out.add(epc)) {
+                            onReceiveEpc(epc, tid);
                         }
                     }
-
-                    throw e;
-                } finally {
-                    it++;
+                    // command failed
+                    else if (m instanceof SatoMessage.Nak) {
+                        logger.warn("Failed to query printer status and EPC");
+                        // break _loop;
+                    }
+                    // unknown
+                    else {
+                        logger.warnf("Unexpected message type received: '%s'", m);
+                    }
                 }
+
+                it++;
             }
         } finally {
             // print finished
@@ -196,121 +179,238 @@ public class SatoPrinter extends BasePrinter {
 
     // CALLBACKS
     @Override
-    public void onReceiveEpc(final String epc) {
-        logger.debugf("[%s] Received EPC: '%s'", tag(), epc);
+    public void onReceiveEpc(final String epc, final String tid) {
+        logger.debugf("[%s] Received EPC: '%s', TID: '%s'", tag(), epc, tid);
     }
 
     @Override
     public void onUpdateStatus(final Object obj) {
-        final SatoPrinterInformation information = (SatoPrinterInformation) obj;
+        final SatoMessage.PrinterInfo information = (SatoMessage.PrinterInfo) obj;
         logger.debugf("[%s] Printer status changed: %s", tag(), information);
     }
 
     // ACTIONS
     @Override
-    public void play() throws PrinterException {
-        reconnect();
-
-        paused = false;
-
-        for (int i = 0; i < 3; i++) {
-            queryPlay();
-            try {
-                Thread.sleep(300);
-            } catch (InterruptedException e) {
-                logger.errorf(e, "[%s] Error while sleeping", tag());
-            }
+    public boolean play() throws PrinterException {
+        final boolean resumed = queryResume();
+        if (resumed) {
+            logger.infof("[%s] Printing resumed.", tag());
+        } else {
+            logger.errorf("[%s] Failed to resume printing.", tag());
         }
-
-        if (!printing) {
-            close();
-        }
+        return resumed;
     }
 
     @Override
-    public void pause() throws PrinterException {
-        reconnect();
-
-        paused = true;
-
-        for (int i = 0; i < 3; i++) {
-            queryPause();
-            try {
-                Thread.sleep(300);
-            } catch (InterruptedException e) {
-                logger.errorf(e, "[%s] Error while sleeping", tag());
-            }
+    public boolean pause() throws PrinterException {
+        final boolean paused = queryPause();
+        if (paused) {
+            logger.infof("[%s] Printing paused.", tag());
+        } else {
+            logger.errorf("[%s] Failed to pause printing.", tag());
         }
+        return paused;
+    }
 
-        if (!printing) {
-            close();
+    @Override
+    public boolean cancel() throws PrinterException {
+        final boolean cancelled = queryCancel();
+        if (cancelled) {
+            setPrinting(false);
+            setAbort(true);
+            logger.infof("[%s] Printing cancelled.", tag());
+        } else {
+            logger.errorf("[%s] Failed to cancel printing.", tag());
         }
+        return cancelled;
     }
 
     @Override
-    public void cancel() throws PrinterException {
-        cancel(false, false);
-    }
-
-    @Override
-    public void cancelSku() throws PrinterException {
-        cancel(false, true);
-    }
-
-    @Override
-    public void cancelAll() throws PrinterException {
-        cancel(true, false);
-    }
-
-    protected void cancel(boolean abort, boolean skip) throws PrinterException {
-        // make sure we are connected to the printer
-        reconnect();
-
-        this.printing = false;
-        this.abort = abort;
-        if (skip) {
+    public boolean cancelSku() throws PrinterException {
+        final boolean canceled = queryCancel();
+        if (canceled) {
+            final String sku = getSku();
             markSkuToSkip(sku);
+            logger.infof("[%s] Canceled printing of sku '%s'.", tag(), sku);
+        } else {
+            logger.errorf("[%s] Failed to cancel printing.", tag());
         }
-
-        for (int i = 0; i < 5; i++) {
-            queryCancel();
-            try {
-                Thread.sleep(400);
-            } catch (InterruptedException e) {
-                logger.errorf(e, "[%s] Error while sleeping", tag());
-            }
-        }
-
-        close();
+        return canceled;
     }
 
     // COMMANDS
-    protected void requestPrinterStatusAndEPC() throws PrinterException {
-        // PG command returns the printer status. (requires PK command to return, pg. 435)
-        // PK command returns the status of RFID tag write by <IP0> command and EPC/TID. (pg. 444, 451)
+
+    /**
+     * Command used to request printer status and tag EPC/TID
+     *
+     * @throws PrinterException
+     */
+    protected List<SatoMessage> queryStatusAndTags() throws PrinterException {
+        // DC2 + PG = command returns the printer status. (requires PK command to return, pg. 435)
+        // DC2 + PK = command returns the status of RFID tag write by <IP0> command and EPC/TID. (pg. 444, 451)
         final String cmd = "\u0002\u0012PG\u0012PK\u0003";
-        reconnect();
-        logger.infof("[%s] Socket send: u0002, u0012PG u0012PK u0003", tag());
-        send(cmd);
+        return sendCommandAndWait(cmd, 1_000);
     }
 
-    protected void queryPlay() throws PrinterException {
+    /**
+     * <DC2 + PG>: Command used to request printer status information.
+     * <p>
+     * obs.:
+     * 1. Return data format <[STX]a...a,b...bc,d...de,...[ETX]> (e.g: [STX]32,PS0,RS0,RE0,PE0,EN00,BT0,Q000000[ETX])
+     * 2. Return data <NAK> when a command error occurs
+     *
+     * @throws PrinterException
+     */
+    protected SatoMessage.PrinterInfo queryPrinterStatus() throws PrinterException {
+        // DC2 + PG = command returns the printer status. (requires PK command to return, pg. 435)
+        final String cmd = "\u0002\u0012PG\u0003";
+        final List<SatoMessage> messages = this.sendCommandAndWait(cmd, 1_000);
+        for (SatoMessage m : messages) {
+            if (m instanceof SatoMessage.PrinterInfo) {
+                return (SatoMessage.PrinterInfo) m;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * <DC2 + PK>: Command used to request status of RFID tag write by <IP0> command and EPC/TID
+     * <p>
+     * obs.:
+     * 1. Return data format <[STX]a...a,b,c,d...d[ETX]> (e.g: EP:E0123456789ABCDEF0123456,ID:E200680612345678)
+     * 2. Return data <NAK> when a command error occurs
+     *
+     * @throws PrinterException
+     */
+    protected SatoMessage.TagInfo queryEPCAndTID() throws PrinterException {
+        // DC2 + PK = command returns the status of RFID tag write by <IP0> command and EPC/TID. (pg. 444, 451)
+        final String cmd = "\u0002\u0012PK\u0003";
+        final List<SatoMessage> messages = sendCommandAndWait(cmd, 1_000);
+        for (SatoMessage m : messages) {
+            if (m instanceof SatoMessage.TagInfo) {
+                return (SatoMessage.TagInfo) m;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * <DC1 + H>: Command used to resume printing.
+     * <p>
+     * obs.:
+     * 1. Return <ACK> (HEX 06H) - No error in the printer
+     * 2. Return <NAK> (HEX 15H) - Error in the printer
+     *
+     * @throws PrinterException
+     */
+    protected boolean queryResume() throws PrinterException {
+        // DC1 + H = command starts printing. (pg. 495)
         final String cmd = "\u0002\u0011H\u0003";
-        logger.infof("[%s] Socket send: u0002, u0011H, u0003 (play printing)", tag());
-        send(cmd);
+        return sendControlCommand(cmd, 500);
     }
 
-    protected void queryPause() throws PrinterException {
+    /**
+     * <DLE + H>: Command used to pause print printing.
+     * <p>
+     * obs.:
+     * 1. Return <ACK> (HEX 06H) - No error in the printer
+     * 2. Return <NAK> (HEX 15H) - Error in the printer
+     *
+     * @throws PrinterException
+     */
+    protected boolean queryPause() throws PrinterException {
+        // DLE + H = command pause printing. (pg. 495)
         final String cmd = "\u0002\u0010H\u0003";
-        logger.infof("[%s] Socket send: u0002, u0010H, u0003 (pause printing)", tag());
-        send(cmd);
+        return sendControlCommand(cmd, 500);
     }
 
-    protected void queryCancel() throws PrinterException {
-        // This command cancels print jobs and clears the entire contents of receive buffer.
+    /**
+     * <DC2 + PH>: Cancel used to cancel print jobs and clear printer buffer.
+     * <p>
+     * obs.:
+     * 1. Return <ACK> - Ok
+     * 2. Return <NAK> - Error
+     *
+     * @throws PrinterException -- when socket connection is lost.
+     */
+    protected boolean queryCancel() throws PrinterException {
+        // DC2 + PH = This command cancels print jobs and clears the entire contents of receive buffer. (pg. 438)
         final String cmd = "\u0002\u0012PH\u0003";
-        logger.infof("[%s] Socket send: u0002, u0012PH, u0003 (cancel printing)", tag());
-        send(cmd);
+        return this.sendControlCommand(cmd, 1_000);
+    }
+
+    /**
+     * <DC2 + DC>: Command used to restart the printer.
+     * <p>
+     * obs.:
+     * 1. Printer response with <NAK> (only during printing)
+     *
+     * @return
+     * @throws PrinterException
+     */
+    protected boolean queryReset() throws PrinterException {
+        // DC2 + DC = This command resets the printer to its default state. (pg. 400)
+        final String cmd = "\u0002\u0012DC\u0003";
+        return sendControlCommand(cmd, 500);
+    }
+
+    /**
+     * <DC2 + DD>: Command used to turn off the printer.
+     * <p>
+     * obs.:
+     * 1. Printer response with <NAK> (only during printing)
+     *
+     * @return
+     * @throws PrinterException
+     */
+    protected boolean queryPowerOff() throws PrinterException {
+        // DC2 + DD = This command powers off the printer. (pg. 400)
+        final String cmd = "\u0002\u0012DD\u0003";
+        return sendControlCommand(cmd, 500);
+    }
+
+    // HELPERS
+
+    /**
+     * Send command and block until we receive an ACK/NAK or a framed response, or timeout.
+     *
+     * @param cmd     - printer command string.
+     * @param timeout - response timeout (milliseconds)
+     * @return parsed SatoMessage list, it may be empty on timeout.
+     * @throws PrinterException
+     */
+    protected List<SatoMessage> sendCommandAndWait(final String cmd, final long timeout) throws PrinterException {
+        return this.sendCommandAndWait(
+            cmd,
+            timeout,
+            (p) -> parser.parse(p),
+            (messages) -> messages.stream().anyMatch((m) ->
+                m instanceof SatoMessage.Ack
+                    || m instanceof SatoMessage.Nak
+                    || m instanceof SatoMessage.PrinterInfo
+                    || m instanceof SatoMessage.TagInfo
+            )
+        );
+    }
+
+    /**
+     * Send control command and return true on ACK, false on NAK / timeout.
+     *
+     * @param cmd     -- printer command string.
+     * @param timeout -- response timeout
+     * @return
+     * @throws PrinterException
+     */
+    protected boolean sendControlCommand(final String cmd, final long timeout) throws PrinterException {
+        final List<SatoMessage> messages = sendCommandAndWait(cmd, timeout);
+        for (SatoMessage m : messages) {
+            if (m instanceof SatoMessage.Ack) {
+                return true;
+            } else if (m instanceof SatoMessage.Nak) {
+                return false;
+            }
+        }
+        return false;
     }
 
     // HELPERS

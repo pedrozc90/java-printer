@@ -5,7 +5,6 @@ import lombok.RequiredArgsConstructor;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.stream.Stream;
 
 @Getter
 @RequiredArgsConstructor
@@ -38,13 +37,6 @@ public enum RibbonStatus {
     public static RibbonStatus get(final String value) {
         if (value == null) return null;
         return _codes.get(value);
-    }
-
-    public static RibbonStatus parse(final String line) {
-        return Stream.of(values())
-            .filter(v -> line.contains("," + v.code + ","))
-            .findFirst()
-            .orElse(null);
     }
 
     @Override

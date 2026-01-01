@@ -10,12 +10,12 @@ provides Zebra-specific print and status handling.
 
 ```bash
 # build module
-mvn -am -pl printer-zebra clean package
+./mvnw -am -pl printer-zebra clean package
 ```
 
 ```bash
 # run module tests
-mvn -am -pl printer-zebra test
+./mvnw -am -pl printer-zebra test
 ```
 
 ## Usage

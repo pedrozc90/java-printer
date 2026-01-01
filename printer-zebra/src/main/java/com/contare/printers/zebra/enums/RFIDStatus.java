@@ -76,7 +76,10 @@ public enum RFIDStatus {
 
     static {
         for (RFIDStatus row : values()) {
-            _codes.put(row.code, row);
+            final String code = row.code;
+            final String subcode = code.substring(code.length() - 4);
+            _codes.put(code, row);
+            _codes.put(subcode, row);
         }
     }
 

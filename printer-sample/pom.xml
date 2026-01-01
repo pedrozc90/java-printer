@@ -53,6 +53,7 @@
             <groupId>com.contare</groupId>
             <artifactId>printer-tests</artifactId>
             <version>${project.version}</version>
+            <scope>compile</scope>
         </dependency>
 
         <!-- Logback -->

@@ -1,6 +1,7 @@
 package com.contare.printers.core;
 
 import com.contare.printers.core.exceptions.PrinterConnectionException;
+import com.contare.printers.core.objects.RawPacket;
 import lombok.Data;
 import org.jboss.logging.Logger;
 
@@ -284,12 +285,12 @@ public class PrinterConnection implements Closeable {
      * @return a list of packet strings using the configured charset. Returns an empty list if no bytes were read.
      * @throws PrinterConnectionException if input stream is not initialized or an IO error occurs (including socket timeouts).
      */
-    public List<String> readAsPackets() throws PrinterConnectionException {
+    public List<RawPacket> readAsPackets() throws PrinterConnectionException {
         if (_input == null) {
             throw new PrinterConnectionException("Printer input stream is not initialized. Are you connected?");
         }
 
-        final List<String> packets = new ArrayList<>();
+        final List<RawPacket> packets = new ArrayList<>();
 
         final ByteArrayOutputStream out = new ByteArrayOutputStream();
         int b;
@@ -298,7 +299,7 @@ public class PrinterConnection implements Closeable {
                 if (b == STX) {
                     // flush accumulated data as a packet before start a new packet
                     if (out.size() > 0) {
-                        final String packet = flush(out);
+                        final RawPacket packet = flush(out);
                         packets.add(packet);
                     }
 
@@ -307,7 +308,7 @@ public class PrinterConnection implements Closeable {
                 } else if (b == ETX) {
                     // end of a packet, flush it including ETX (even if it had no STX)
                     out.write(b);
-                    final String packet = flush(out);
+                    final RawPacket packet = flush(out);
                     packets.add(packet);
                 } else {
                     // append byte to the current packet
@@ -317,7 +318,7 @@ public class PrinterConnection implements Closeable {
 
             // if EOF is reached and there is remaining data, treat it as a final packet.
             if (out.size() > 0) {
-                final String packet = flush(out);
+                final RawPacket packet = flush(out);
                 packets.add(packet);
             }
         } catch (SocketTimeoutException e) {
@@ -329,9 +330,9 @@ public class PrinterConnection implements Closeable {
         return packets;
     }
 
-    private String flush(final ByteArrayOutputStream out) {
+    private RawPacket flush(final ByteArrayOutputStream out) {
         final byte[] bytes = out.toByteArray();
-        final String packet = new String(bytes, charset);
+        final RawPacket packet = new RawPacket(bytes, charset);
         out.reset();
         return packet;
     }

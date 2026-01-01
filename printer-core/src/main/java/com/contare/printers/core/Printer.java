@@ -32,8 +32,9 @@ public interface Printer extends AutoCloseable {
      * Hook called when the printer returns a new EPC/TID.
      *
      * @param epc - rfid hexadecimal string.
+     * @param tid - tid string.
      */
-    void onReceiveEpc(final String epc);
+    void onReceiveEpc(final String epc, final String tid);
 
     /**
      * Hook called when the printer status changes.
@@ -77,37 +78,34 @@ public interface Printer extends AutoCloseable {
     /**
      * Send the command to start or resume printing.
      *
+     * @return true if printer ACKed the command, false otherwise.
      * @throws PrinterException if the command cannot be sent or the device reports an error.
      */
-    void play() throws PrinterException;
+    boolean play() throws PrinterException;
 
     /**
      * Send the command to pause the current print job.
      *
+     * @return true if printer ACKed the command, false otherwise.
      * @throws PrinterException if the command cannot be sent or the device reports an error.
      */
-    void pause() throws PrinterException;
+    boolean pause() throws PrinterException;
 
     /**
      * Cancel the current print job on the device.
      *
+     * @return true if printer ACKed the command, false otherwise.
      * @throws PrinterException if the cancel command fails or the device reports an error.
      */
-    void cancel() throws PrinterException;
+    boolean cancel() throws PrinterException;
 
     /**
      * Cancel printing for the current SKU context only (implementation-defined
      * behavior).
      *
+     * @return true if printer ACKed the command, false otherwise.
      * @throws PrinterException if the operation fails.
      */
-    void cancelSku() throws PrinterException;
-
-    /**
-     * Cancel all pending jobs on the device.
-     *
-     * @throws PrinterException if the operation fails.
-     */
-    void cancelAll() throws PrinterException;
+    boolean cancelSku() throws PrinterException;
 
 }

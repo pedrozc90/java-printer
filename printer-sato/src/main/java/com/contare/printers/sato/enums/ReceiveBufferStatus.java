@@ -5,7 +5,6 @@ import lombok.RequiredArgsConstructor;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.stream.Stream;
 
 @Getter
 @RequiredArgsConstructor
@@ -37,13 +36,6 @@ public enum ReceiveBufferStatus {
     public static ReceiveBufferStatus get(final String code) {
         if (code == null) return null;
         return _codes.get(code);
-    }
-
-    public static ReceiveBufferStatus parse(final String line) {
-        return Stream.of(values())
-            .filter((v) -> line.contains("," + v.code + ","))
-            .findFirst()
-            .orElse(null);
     }
 
     @Override
