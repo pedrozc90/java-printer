@@ -7,7 +7,7 @@
     <parent>
         <groupId>com.pedrozc90</groupId>
         <artifactId>printer</artifactId>
-        <version>1.0.0</version>
+        <version>${revision}</version>
     </parent>
 
     <artifactId>printer-avery-dennison</artifactId>
